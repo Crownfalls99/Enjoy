@@ -1,0 +1,11 @@
+#!/bin/bash
+
+fuser -k 5000/tcp 5001/tcp 5002/tcp
+
+rm -f process
+gcc -o process process.c -lpthread
+
+./process 0 &
+./process 1 &
+./process 2 &
+
