@@ -1,11 +1,17 @@
 #!/bin/bash
 
-fuser -k 5000/tcp 5001/tcp 5002/tcp
+base=5000
+n_nodes=5
+
+for((i=0;i<${n_nodes};i++)); do
+	let port=${base}+$i
+	fuser -k "${port}"/tcp
+done	
 
 rm -f process
 gcc -o process process.c -lpthread
 
-./process 0 &
-./process 1 &
-./process 2 &
+for((j=0;j<${n_nodes};j++)); do
+	./process "${base}" "${n_nodes}" "$j"&
+done
 
