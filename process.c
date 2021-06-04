@@ -7,112 +7,122 @@
 # include <sys/socket.h>
 # include <pthread.h>
 
-# define PORT_BASE 5000
-# define NODE_NUM 3
-# define BUFSIZE 64
+# define BUFSIZE 4
+# define TERMINATE 999
 
-int port;
+int base, n_nodes, port;
+int tick;
 
-void errCast(char* msg) {
-	fprintf(stderr, "%s\n", msg);
+void err_cast(char* msg) {
+	printf("%s\n", msg);
 	exit(1);
 }
 
-
-void Pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg) {
-
-	int res = pthread_create(thread, attr, start_routine, arg);
-	if (res != 0 ) errCast("pthread create");
+void int2str(char* buf, int n) {
+	memset(buf, 0, BUFSIZE);
+	sprintf(buf, "%d", n);
 }
 
-void* Listener(void* arg) {
-	int lsd = *( (int*) arg );
-
-	struct sockaddr_in listening;
-	
-	socklen_t len = sizeof(listening);
-	int listening_sd = accept(lsd, (struct sockaddr*)&listening, &len);
-	if (listening_sd == -1) errCast("accept");
-	
-	printf("port %d connected\n", PORT_BASE + port);
-
-	
-	char buf[BUFSIZE];
-	recv(listening_sd, buf, sizeof(buf), 0);
-
-	buf[BUFSIZE - 1] = '\0';
-	printf("port %d received %s\n", port, buf);
-
-
-	return NULL;
-}
-
-void* Sender(void* arg) {
-	printf("port %d sender start\n", port);
-
+void* sender_routine(void* arg) {
+	int res;
 	int ssd = socket(AF_INET, SOCK_STREAM, 0);
-	if (ssd == -1) errCast("socket create");
-
-
-	struct sockaddr_in sending;
-	sending.sin_family = AF_INET;
-	sending.sin_port = htons(PORT_BASE + ((port + 1) % NODE_NUM));
+	if (ssd == -1) err_cast("socket");
 
 	struct in_addr ip;
 	memset(&ip, 0, sizeof(ip));
-	int res1 = inet_pton(AF_INET, "127.0.0.1", &ip);
-	if (res1 == -1) errCast("inet_pton");
+	res = inet_pton(AF_INET, "127.0.0.1", &ip);
+	if (res == -1) err_cast("inet_pton");
 
+	struct sockaddr_in sending;
+	sending.sin_family = AF_INET;
+	sending.sin_port = htons(base + ((port + 1) % n_nodes));
 	sending.sin_addr = ip;
 	memset(&sending.sin_zero, 0, sizeof(sending.sin_zero));
 
-	while (connect(ssd, (struct sockaddr*)&sending, sizeof(sending)) != -1) ;
+	sleep(tick);
+	res = connect(ssd, (struct sockaddr*)&sending, sizeof(sending)) ;
+	if (res == -1) err_cast("connect");
 	
-	char* msg = "fuck";
+	char buf[BUFSIZE];
+	int2str(buf, port);
+	
+	res = (int)send(ssd, buf, strlen(buf), 0);
+	if (res == -1 || res == 0) err_cast("send");
 
-	send(ssd, msg, strlen(msg), 0);
+	
 
-	printf("port %d sender ends\n", port);
+
+	/*
+	for (int i = 10; i < 13; i++) {
+		sleep(tick);
+		int2str(buf, i);
+		res = (int)send(ssd, buf, strlen(buf), 0);
+		if (res == -1 || res == 0 ) err_cast("send");
+	}
+	*/
+
+	sleep(tick);
+	int2str(buf, TERMINATE);
+	res = (int)send(ssd, buf, strlen(buf), 0);
+	if (res == -1 || res == 0) err_cast("send");
+
 	close(ssd);
-
 	return NULL;
 }
 
 int main(int argc, char* argv[]) {
-	if (argc != 2) errCast("invalid argument");
+	if (argc != 4) err_cast("invalid argument");
+	base = atoi(argv[1]);
+	n_nodes = atoi(argv[2]);
+	port = atoi(argv[3]);
+	tick = (int)(0.5 * n_nodes + 0.5);
 
-	int lsd = socket(AF_INET, SOCK_STREAM, 0);
-	if (lsd == -1) errCast("socket create");
+	int res;
+	int sd = socket(AF_INET, SOCK_STREAM, 0);
+	if (sd == -1) err_cast("socket");
 
 	int optval = 1;
-	
-	int res1 = setsockopt(lsd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
-	if (res1 == -1) errCast("setsockopt");
+	res = setsockopt(sd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+	if (res == -1) err_cast("setsockopt");
 
 	struct sockaddr_in addr;
 	addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = INADDR_ANY;
-	
-	port = atoi(argv[1]);
-	addr.sin_port = htons(PORT_BASE + port);
+	addr.sin_port = htons(base + port);
 
-	ssize_t res2 = bind(lsd, (struct sockaddr*)&addr, sizeof(addr));
-	if (res2 == -1) errCast("bind");
+	res = (int)bind(sd, (struct sockaddr*)&addr, sizeof(addr));
+	if (res == -1) err_cast("bind");
 
-	int res3 = listen(lsd, 5);
-	if (res3 == -1) errCast("listen");
+	res = listen(sd, 5);
+	if (res == -1) err_cast("listen");
 
-	pthread_t listener;
-	Pthread_create(&listener, NULL, Listener, (void*)&lsd);
-		
 	pthread_t sender;
-	Pthread_create(&sender, NULL, Sender, NULL);
+	res = pthread_create(&sender, NULL, sender_routine, NULL);
+	if (res != 0 ) err_cast("pthread_creat");
 
-	pthread_join(sender, NULL);
-	pthread_join(listener, NULL);
+	struct sockaddr_in listening;
+	socklen_t len = sizeof(listening);
+	int lsd = accept(sd, (struct sockaddr*)&listening, &len);
+	if (lsd == -1) err_cast("accept");
 
+	char buf[BUFSIZE];
+
+	while(1) {
+		res = recv(lsd, buf, sizeof(buf), 0);
+		if (res == -1 || res == 0) err_cast("recv");
+		
+		if(atoi(buf) == TERMINATE) break;
+
+		buf[res] = '\0';
+		printf("node %d receive : %s\n", port, buf);
+	}
+
+	res = pthread_join(sender, NULL);
+	if (res != 0) err_cast("pthread_join");
+
+	close(sd);
 	close(lsd);
-	printf("port %d listener ends\n", port);
+	printf("node %d ended\n", port);
 	return 0;
 }
 
